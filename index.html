@@ -39,6 +39,42 @@
 </head>
 <body oncontextmenu="return false;">
     <script>
+(function () {
+  function log(msg) {
+    var el = document.getElementById('hwlog');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'hwlog';
+      el.style.cssText = 'position:fixed;top:0;left:0;z-index:99999;background:#000;color:#0f0;font:10px monospace;max-height:40vh;overflow:auto;pointer-events:none;white-space:pre-wrap;opacity:.85;padding:2px;';
+      document.body.appendChild(el);
+    }
+    el.textContent += (new Date().toISOString().slice(11,19)) + ' ' + msg + '\n';
+  }
+  window.__hwlog = log;
+  var origOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (m, u, a) {
+    this._hwurl = u; this._hwmethod = m;
+    return origOpen.apply(this, arguments);
+  };
+  var origSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.send = function (body) {
+    var xhr = this;
+    var url = String(xhr._hwurl || '');
+    if (url.indexOf('get_level') >= 0 || url.indexOf('/tjf/') >= 0) {
+      log('SEND ' + xhr._hwmethod + ' ' + url + ' body=' + String(body || '').slice(0, 200));
+      xhr.addEventListener('load', function () {
+        var t = '';
+        try { t = String(xhr.responseText || '').slice(0, 120); } catch (e) { t = '[no responseText: ' + e.name + ']'; }
+        log('DONE ' + url + ' status=' + xhr.status + ' len=' + (xhr.responseText ? xhr.responseText.length : -1) + ' head=' + t.replace(/\n/g, ' '));
+      });
+      xhr.addEventListener('error', function () { log('ERROR ' + url); });
+    }
+    return origSend.apply(this, arguments);
+  };
+})();
+</script>
+
+    <script>
 /* Happy Wheels off-domain fix.
    The game fetches levels from totaljerkface.com, which blocks
    cross-origin requests. /tjf/ is proxied to totaljerkface.com
