@@ -39,13 +39,11 @@
 </head>
 <body oncontextmenu="return false;">
     <script>
-/* Level proxy shim + request logger.
-   The game fetches levels from totaljerkface.com, which blocks
-   cross-origin requests. /tjf/ is proxied to totaljerkface.com
-   by vercel.json. Requests are logged to window.__hwlog and also
-   rendered into a visible on-page overlay (#hwlog) so they can be
-   read without a console. */
+/* Level proxy shim + request logger v2.
+   Logs every XHR/fetch to window.__hwlog AND renders it into a
+   visible on-page overlay (#hwlog). /tjf/ proxies to totaljerkface.com. */
 window.__hwlog = [];
+var __hwseq = 0;
 function _hwlog(m, u) {
   try {
     var line = new Date().toISOString().slice(11, 19) + ' ' + m + ' ' + u;
@@ -60,6 +58,8 @@ function _hwlog(m, u) {
     el.textContent = window.__hwlog.join('\n');
   } catch (e) {}
 }
+window.addEventListener('error', function (e) { _hwlog('PAGEERROR', String(e.message).slice(0, 200) + ' @' + (e.filename || '') + ':' + (e.lineno || '')); });
+window.addEventListener('unhandledrejection', function (e) { _hwlog('UNHANDLED', String(e.reason).slice(0, 300)); });
 (function () {
   function proxify(u) {
     if (typeof u !== 'string') return u;
@@ -71,16 +71,23 @@ function _hwlog(m, u) {
   var origOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function (m, u, a, us, pw) {
     var nu = proxify(u);
-    _hwlog('XHR-OPEN', m + ' ' + nu);
+    var id = ++__hwseq;
+    this.__hwid = id;
+    this.__hwurl = nu;
+    this.__hwmethod = m;
+    _hwlog('XHR-OPEN #' + id, m + ' ' + nu);
     var xhr = this;
-    xhr.addEventListener('load', function () { _hwlog('XHR-LOAD', m + ' ' + nu + ' status=' + xhr.status + ' len=' + (xhr.responseText ? xhr.responseText.length : (xhr.response ? xhr.response.length : 0))); });
-    xhr.addEventListener('error', function () { _hwlog('XHR-ERROR', m + ' ' + nu); });
-    xhr.addEventListener('timeout', function () { _hwlog('XHR-TIMEOUT', m + ' ' + nu); });
+    xhr.addEventListener('readystatechange', function () { if (xhr.readyState === 4) _hwlog('XHR-DONE #' + id, m + ' ' + nu + ' status=' + xhr.status + ' len=' + (xhr.responseText ? xhr.responseText.length : (xhr.response ? xhr.response.length : 0))); });
+    xhr.addEventListener('load', function () { _hwlog('XHR-LOAD #' + id, m + ' ' + nu + ' status=' + xhr.status + ' len=' + (xhr.responseText ? xhr.responseText.length : (xhr.response ? xhr.response.length : 0))); });
+    xhr.addEventListener('error', function () { _hwlog('XHR-ERROR #' + id, m + ' ' + nu); });
+    xhr.addEventListener('timeout', function () { _hwlog('XHR-TIMEOUT #' + id, m + ' ' + nu); });
+    xhr.addEventListener('abort', function () { _hwlog('XHR-ABORT #' + id, m + ' ' + nu); });
     return origOpen.call(this, m, nu, a, us, pw);
   };
   var origSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.send = function (body) {
-    if (body) _hwlog('XHR-BODY', String(body).slice(0, 300));
+    var b = (body === null || body === undefined) ? '' : String(body);
+    _hwlog('XHR-SEND #' + (this.__hwid || '?'), (this.__hwmethod || '?') + ' ' + (this.__hwurl || '?') + ' bodyLen=' + b.length + ' body=' + b.slice(0, 200));
     return origSend.call(this, body);
   };
   if (window.fetch) {
