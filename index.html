@@ -39,29 +39,41 @@
 </head>
 <body oncontextmenu="return false;">
     <script>
-/* Level proxy shim: the game fetches levels from totaljerkface.com, which
-   blocks cross-origin requests, so levels never load off-domain. This
-   rewrites those requests to same-origin /tjf/... which vercel.json
-   proxies to totaljerkface.com server-side. Must run before the game
-   scripts load. */
+/* Level proxy shim + request logger.
+   The game fetches levels from totaljerkface.com, which blocks
+   cross-origin requests. /tjf/ is proxied to totaljerkface.com
+   by vercel.json. All requests are logged to window.__hwlog. */
+window.__hwlog = [];
+function _hwlog(m, u) { try { window.__hwlog.push(new Date().toISOString().slice(11, 19) + ' ' + m + ' ' + u); } catch (e) {} }
 (function () {
   function proxify(u) {
     if (typeof u !== 'string') return u;
     var i = u.indexOf('totaljerkface.com/');
-    if (i >= 0) return '/tjf/' + u.slice(i + 'totaljerkface.com/'.length);
-    if (u.indexOf('googleusercontent.com') >= 0) return '/tjf/get_level.hw';
+    if (i >= 0) { var r = '/tjf/' + u.slice(i + 'totaljerkface.com/'.length); _hwlog('REWRITE', u + ' -> ' + r); return r; }
+    if (u.indexOf('googleusercontent.com') >= 0) { _hwlog('REWRITE', u + ' -> /tjf/get_level.hw'); return '/tjf/get_level.hw'; }
     return u;
   }
   var origOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function (m, u, a, us, pw) {
-    return origOpen.call(this, m, proxify(u), a, us, pw);
+    var nu = proxify(u);
+    _hwlog('XHR-OPEN', m + ' ' + nu);
+    var xhr = this;
+    xhr.addEventListener('load', function () { _hwlog('XHR-LOAD', m + ' ' + nu + ' status=' + xhr.status + ' len=' + (xhr.responseText ? xhr.responseText.length : (xhr.response ? xhr.response.length : 0))); });
+    xhr.addEventListener('error', function () { _hwlog('XHR-ERROR', m + ' ' + nu); });
+    xhr.addEventListener('timeout', function () { _hwlog('XHR-TIMEOUT', m + ' ' + nu); });
+    return origOpen.call(this, m, nu, a, us, pw);
+  };
+  var origSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.send = function (body) {
+    if (body) _hwlog('XHR-BODY', String(body).slice(0, 300));
+    return origSend.call(this, body);
   };
   if (window.fetch) {
     var origFetch = window.fetch;
     window.fetch = function (u, o) {
-      if (typeof u === 'string') return origFetch.call(this, proxify(u), o);
-      if (u && u.url) return origFetch.call(this, new Request(proxify(u.url), u), o);
-      return origFetch.apply(this, arguments);
+      var nu = (typeof u === 'string') ? proxify(u) : u;
+      _hwlog('FETCH', (o && o.method ? o.method : 'GET') + ' ' + (typeof nu === 'string' ? nu : nu.url));
+      return origFetch.apply(this, arguments).then(function (r) { _hwlog('FETCH-RES', r.status + ' ' + (typeof nu === 'string' ? nu : nu.url)); return r; }, function (e) { _hwlog('FETCH-ERR', String(e).slice(0, 120)); throw e; });
     };
   }
 })();
