@@ -39,85 +39,49 @@
 </head>
 <body oncontextmenu="return false;">
     <script>
-/* Level proxy shim + request logger v3.
-   FIX: the game's level-data loader opens a SYNCHRONOUS XHR with a
-   responseType set, which browsers reject (InvalidAccessError) so the
-   level never loads. This shim forces such requests async and manages
-   responseType around open(). /tjf/ proxies to totaljerkface.com. */
-window.__hwlog = [];
-var __hwseq = 0;
-function _hwlog(m, u) {
-  try {
-    var line = new Date().toISOString().slice(11, 19) + ' ' + m + ' ' + u;
-    window.__hwlog.push(line);
-    var el = document.getElementById('hwlog');
-    if (!el) {
-      el = document.createElement('pre');
-      el.id = 'hwlog';
-      el.style.cssText = 'position:fixed;left:0;top:0;z-index:99999;max-width:100vw;max-height:40vh;overflow:auto;margin:0;padding:4px;background:rgba(0,0,0,0.75);color:#0f0;font:10px monospace;pointer-events:none;white-space:pre-wrap;word-break:break-all;';
-      document.body.appendChild(el);
-    }
-    el.textContent = window.__hwlog.join('\n');
-  } catch (e) {}
-}
-window.addEventListener('error', function (e) { _hwlog('PAGEERROR', String(e.message).slice(0, 200) + ' @' + (e.filename || '') + ':' + (e.lineno || '')); });
-window.addEventListener('unhandledrejection', function (e) { _hwlog('UNHANDLED', String(e.reason).slice(0, 300)); });
+/* Happy Wheels off-domain fix.
+   The game fetches levels from totaljerkface.com, which blocks
+   cross-origin requests. /tjf/ is proxied to totaljerkface.com
+   by vercel.json (same-origin, so no CORS block).
+   Also, the game's level loader opens a synchronous XHR with a
+   responseType set, which browsers reject (InvalidAccessError);
+   such requests are forced async here. */
 (function () {
   function proxify(u) {
     if (typeof u !== 'string') return u;
     var i = u.indexOf('totaljerkface.com/');
-    if (i >= 0) { var r = '/tjf/' + u.slice(i + 'totaljerkface.com/'.length); _hwlog('REWRITE', u + ' -> ' + r); return r; }
-    if (u.indexOf('googleusercontent.com') >= 0) { _hwlog('REWRITE', u + ' -> /tjf/get_level.hw'); return '/tjf/get_level.hw'; }
+    if (i >= 0) return '/tjf/' + u.slice(i + 'totaljerkface.com/'.length);
+    if (u.indexOf('googleusercontent.com') >= 0) return '/tjf/get_level.hw';
     return u;
   }
   var origOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function (m, u, a, us, pw) {
     var nu = proxify(u);
-    var id = ++__hwseq;
-    this.__hwid = id;
-    this.__hwurl = nu;
-    this.__hwmethod = m;
     var rt = this.responseType;
-    var forced = false;
     if (a === false && rt && rt !== '') {
-      _hwlog('FIX-SYNC #' + id, 'sync XHR with responseType=' + rt + ' -> forcing async');
       try { this.responseType = ''; } catch (e) {}
       a = true;
-      forced = true;
+      var r = origOpen.call(this, m, nu, a, us, pw);
+      try { this.responseType = rt; } catch (e) {}
+      return r;
     }
-    _hwlog('XHR-OPEN #' + id, m + ' ' + nu + ' async=' + (a === undefined ? 'default' : a) + (forced ? ' FORCED' : ''));
-    var xhr = this;
-    xhr.addEventListener('readystatechange', function () { if (xhr.readyState === 4) _hwlog('XHR-DONE #' + id, m + ' ' + nu + ' status=' + xhr.status + ' len=' + (xhr.responseText ? xhr.responseText.length : (xhr.response ? xhr.response.length : 0))); });
-    xhr.addEventListener('load', function () { var len = 0; try { len = xhr.responseText ? xhr.responseText.length : (xhr.response ? xhr.response.length : 0); } catch (e) { len = -1; } _hwlog('XHR-LOAD #' + id, m + ' ' + nu + ' status=' + xhr.status + ' len=' + len); });
-    xhr.addEventListener('error', function () { _hwlog('XHR-ERROR #' + id, m + ' ' + nu); });
-    xhr.addEventListener('timeout', function () { _hwlog('XHR-TIMEOUT #' + id, m + ' ' + nu); });
-    xhr.addEventListener('abort', function () { _hwlog('XHR-ABORT #' + id, m + ' ' + nu); });
-    var r;
+    var r2;
     try {
-      r = origOpen.call(this, m, nu, a, us, pw);
+      r2 = origOpen.call(this, m, nu, a, us, pw);
     } catch (e) {
       if (String(e).indexOf('Synchronous') >= 0 || String(e.name).indexOf('InvalidAccess') >= 0) {
-        _hwlog('FIX-RETRY #' + id, 'open threw (' + String(e).slice(0, 80) + ') -> retry async, responseType cleared');
         try { this.responseType = ''; } catch (e2) {}
-        r = origOpen.call(this, m, nu, true, us, pw);
+        r2 = origOpen.call(this, m, nu, true, us, pw);
         if (rt) { try { this.responseType = rt; } catch (e3) {} }
       } else { throw e; }
     }
-    if (forced && rt) { try { this.responseType = rt; } catch (e) {} }
-    return r;
-  };
-  var origSend = XMLHttpRequest.prototype.send;
-  XMLHttpRequest.prototype.send = function (body) {
-    var b = (body === null || body === undefined) ? '' : String(body);
-    _hwlog('XHR-SEND #' + (this.__hwid || '?'), (this.__hwmethod || '?') + ' ' + (this.__hwurl || '?') + ' bodyLen=' + b.length + ' body=' + b.slice(0, 200));
-    return origSend.call(this, body);
+    return r2;
   };
   if (window.fetch) {
     var origFetch = window.fetch;
     window.fetch = function (u, o) {
       var nu = (typeof u === 'string') ? proxify(u) : u;
-      _hwlog('FETCH', (o && o.method ? o.method : 'GET') + ' ' + (typeof nu === 'string' ? nu : nu.url));
-      return origFetch.apply(this, arguments).then(function (r) { _hwlog('FETCH-RES', r.status + ' ' + (typeof nu === 'string' ? nu : nu.url)); return r; }, function (e) { _hwlog('FETCH-ERR', String(e).slice(0, 120)); throw e; });
+      return origFetch.call(this, nu, o);
     };
   }
 })();
