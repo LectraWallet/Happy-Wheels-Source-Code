@@ -39,9 +39,11 @@
 </head>
 <body oncontextmenu="return false;">
     <script>
-/* Level proxy shim + request logger v2.
-   Logs every XHR/fetch to window.__hwlog AND renders it into a
-   visible on-page overlay (#hwlog). /tjf/ proxies to totaljerkface.com. */
+/* Level proxy shim + request logger v3.
+   FIX: the game's level-data loader opens a SYNCHRONOUS XHR with a
+   responseType set, which browsers reject (InvalidAccessError) so the
+   level never loads. This shim forces such requests async and manages
+   responseType around open(). /tjf/ proxies to totaljerkface.com. */
 window.__hwlog = [];
 var __hwseq = 0;
 function _hwlog(m, u) {
@@ -75,14 +77,34 @@ window.addEventListener('unhandledrejection', function (e) { _hwlog('UNHANDLED',
     this.__hwid = id;
     this.__hwurl = nu;
     this.__hwmethod = m;
-    _hwlog('XHR-OPEN #' + id, m + ' ' + nu);
+    var rt = this.responseType;
+    var forced = false;
+    if (a === false && rt && rt !== '') {
+      _hwlog('FIX-SYNC #' + id, 'sync XHR with responseType=' + rt + ' -> forcing async');
+      try { this.responseType = ''; } catch (e) {}
+      a = true;
+      forced = true;
+    }
+    _hwlog('XHR-OPEN #' + id, m + ' ' + nu + ' async=' + (a === undefined ? 'default' : a) + (forced ? ' FORCED' : ''));
     var xhr = this;
     xhr.addEventListener('readystatechange', function () { if (xhr.readyState === 4) _hwlog('XHR-DONE #' + id, m + ' ' + nu + ' status=' + xhr.status + ' len=' + (xhr.responseText ? xhr.responseText.length : (xhr.response ? xhr.response.length : 0))); });
-    xhr.addEventListener('load', function () { _hwlog('XHR-LOAD #' + id, m + ' ' + nu + ' status=' + xhr.status + ' len=' + (xhr.responseText ? xhr.responseText.length : (xhr.response ? xhr.response.length : 0))); });
+    xhr.addEventListener('load', function () { var len = 0; try { len = xhr.responseText ? xhr.responseText.length : (xhr.response ? xhr.response.length : 0); } catch (e) { len = -1; } _hwlog('XHR-LOAD #' + id, m + ' ' + nu + ' status=' + xhr.status + ' len=' + len); });
     xhr.addEventListener('error', function () { _hwlog('XHR-ERROR #' + id, m + ' ' + nu); });
     xhr.addEventListener('timeout', function () { _hwlog('XHR-TIMEOUT #' + id, m + ' ' + nu); });
     xhr.addEventListener('abort', function () { _hwlog('XHR-ABORT #' + id, m + ' ' + nu); });
-    return origOpen.call(this, m, nu, a, us, pw);
+    var r;
+    try {
+      r = origOpen.call(this, m, nu, a, us, pw);
+    } catch (e) {
+      if (String(e).indexOf('Synchronous') >= 0 || String(e.name).indexOf('InvalidAccess') >= 0) {
+        _hwlog('FIX-RETRY #' + id, 'open threw (' + String(e).slice(0, 80) + ') -> retry async, responseType cleared');
+        try { this.responseType = ''; } catch (e2) {}
+        r = origOpen.call(this, m, nu, true, us, pw);
+        if (rt) { try { this.responseType = rt; } catch (e3) {} }
+      } else { throw e; }
+    }
+    if (forced && rt) { try { this.responseType = rt; } catch (e) {} }
+    return r;
   };
   var origSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.send = function (body) {
