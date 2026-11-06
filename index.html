@@ -42,9 +42,24 @@
 /* Level proxy shim + request logger.
    The game fetches levels from totaljerkface.com, which blocks
    cross-origin requests. /tjf/ is proxied to totaljerkface.com
-   by vercel.json. All requests are logged to window.__hwlog. */
+   by vercel.json. Requests are logged to window.__hwlog and also
+   rendered into a visible on-page overlay (#hwlog) so they can be
+   read without a console. */
 window.__hwlog = [];
-function _hwlog(m, u) { try { window.__hwlog.push(new Date().toISOString().slice(11, 19) + ' ' + m + ' ' + u); } catch (e) {} }
+function _hwlog(m, u) {
+  try {
+    var line = new Date().toISOString().slice(11, 19) + ' ' + m + ' ' + u;
+    window.__hwlog.push(line);
+    var el = document.getElementById('hwlog');
+    if (!el) {
+      el = document.createElement('pre');
+      el.id = 'hwlog';
+      el.style.cssText = 'position:fixed;left:0;top:0;z-index:99999;max-width:100vw;max-height:40vh;overflow:auto;margin:0;padding:4px;background:rgba(0,0,0,0.75);color:#0f0;font:10px monospace;pointer-events:none;white-space:pre-wrap;word-break:break-all;';
+      document.body.appendChild(el);
+    }
+    el.textContent = window.__hwlog.join('\n');
+  } catch (e) {}
+}
 (function () {
   function proxify(u) {
     if (typeof u !== 'string') return u;
