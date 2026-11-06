@@ -1,0 +1,5 @@
+{
+  "rewrites": [
+    { "source": "/tjf/:path*", "destination": "https://totaljerkface.com/:path*" }
+  ]
+}

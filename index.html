@@ -39,6 +39,35 @@
 </head>
 <body oncontextmenu="return false;">
     <script>
+/* Level proxy shim: the game fetches levels from totaljerkface.com, which
+   blocks cross-origin requests, so levels never load off-domain. This
+   rewrites those requests to same-origin /tjf/... which vercel.json
+   proxies to totaljerkface.com server-side. Must run before the game
+   scripts load. */
+(function () {
+  function proxify(u) {
+    if (typeof u !== 'string') return u;
+    var i = u.indexOf('totaljerkface.com/');
+    if (i >= 0) return '/tjf/' + u.slice(i + 'totaljerkface.com/'.length);
+    if (u.indexOf('googleusercontent.com') >= 0) return '/tjf/get_level.hw';
+    return u;
+  }
+  var origOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (m, u, a, us, pw) {
+    return origOpen.call(this, m, proxify(u), a, us, pw);
+  };
+  if (window.fetch) {
+    var origFetch = window.fetch;
+    window.fetch = function (u, o) {
+      if (typeof u === 'string') return origFetch.call(this, proxify(u), o);
+      if (u && u.url) return origFetch.call(this, new Request(proxify(u.url), u), o);
+      return origFetch.apply(this, arguments);
+    };
+  }
+})();
+</script>
+
+    <script>
         function report_loading_issue() {
             var el = document.createElement("img");
             el.src = "/DEBUG2/wrong-ref.png?wl=" + window.location + "&wpl=" + window.parent.location + "&wlh=" + window.location.host + "&wplh=" + window.parent.location.host;
